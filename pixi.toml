@@ -1,5 +1,5 @@
 [workspace]
-name = "mantid"
+name = "adara"
 channels = [
   "conda-forge",
 ]
