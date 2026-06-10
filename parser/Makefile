@@ -82,7 +82,7 @@
 
 PROG = adara-parser
 
-CXX = g++
+CXX ?= g++
 
 CXXFLAGS = -Wall -Wextra -Werror -Winit-self -Wpointer-arith \
 		-Wcast-align -Woverloaded-virtual -Wno-missing-field-initializers \
@@ -91,6 +91,12 @@ CXXFLAGS = -Wall -Wextra -Werror -Winit-self -Wpointer-arith \
 CXXLINK = $(CXX) $(CXXFLAGS) -o $@
 
 CPPFLAGS = -I.
+LDFLAGS =
+
+ifneq ($(CONDA_PREFIX),)
+CPPFLAGS += -I$(CONDA_PREFIX)/include
+LDFLAGS += -L$(CONDA_PREFIX)/lib
+endif
 
 LDADD = -lboost_program_options
 
@@ -115,5 +121,4 @@ $(PROG).o: $(SOURCES) $(HEADERS)
 	$(CXX) $(CPPFLAGS) -c -o $(PROG).o $(SOURCES)
 
 $(PROG):  $(PROG).o $(POSIX_PARSER)
-	$(CXXLINK) $(PROG).o $(POSIX_PARSER) $(LDADD) $(LIBS)
-
+	$(CXXLINK) $(LDFLAGS) $(PROG).o $(POSIX_PARSER) $(LDADD) $(LIBS)
