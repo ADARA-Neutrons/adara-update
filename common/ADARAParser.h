@@ -67,13 +67,13 @@ protected:
 	 * must call bufferBytesAppended() to inform the class how much
 	 * new data has been placed in the buffer.
 	 */
-	uint8_t *bufferFillAddress(void) const {
+	uint8_t *bufferFillAddress() const {
 		if (bufferFillLength())
 			return m_buffer + m_len;
-		return NULL;
+		return nullptr;
 	}
 
-	unsigned int bufferFillLength(void) const {
+	unsigned int bufferFillLength() const {
 		return m_size - m_len;
 	}
 
@@ -103,7 +103,7 @@ protected:
 
 	/* Flush the internal buffers and get ready to restart parsing.
 	 */
-	virtual void reset(void);
+	virtual void reset();
 
 	/* This function gets called for every packet that fits in the
 	 * internal buffer; oversize packets will be sent to rxOversizePkt().
@@ -178,7 +178,7 @@ protected:
 
 	/* Reset the collected "discarded packet" statistics.
 	 */
-	void resetDiscardedPacketsStats(void);
+	void resetDiscardedPacketsStats();
 
 private:
 	uint8_t *	m_buffer;

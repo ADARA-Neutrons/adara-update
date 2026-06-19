@@ -9,7 +9,7 @@ using namespace ADARA;
 
 static bool validate_status(uint16_t val)
 {
-	VariableStatus::Enum e = static_cast<VariableStatus::Enum>(val);
+	auto e = static_cast<VariableStatus::Enum>(val);
 
 	/* No default case so that we get warned when new status values
 	 * get added.
@@ -47,7 +47,7 @@ static bool validate_status(uint16_t val)
 
 static bool validate_severity(uint16_t val)
 {
-	VariableSeverity::Enum e = static_cast<VariableSeverity::Enum>(val);
+	auto e = static_cast<VariableSeverity::Enum>(val);
 
 	/* No default case so that we get warned when new severities get added.
 	 */
@@ -85,7 +85,7 @@ Packet::~Packet()
 /* -------------------------------------------------------------------- */
 
 RawDataPkt::RawDataPkt(const uint8_t *data, uint32_t len) :
-	Packet(data, len), m_fields((const uint32_t *)payload())
+	Packet(data, len), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {
 	if (m_version == 0x00 && m_payload_len < (6 * sizeof(uint32_t))) {
 		std::stringstream ss;
@@ -115,7 +115,7 @@ RawDataPkt::RawDataPkt(const uint8_t *data, uint32_t len) :
 }
 
 RawDataPkt::RawDataPkt(const RawDataPkt &pkt) :
-	Packet(pkt), m_fields((const uint32_t *)payload())
+	Packet(pkt), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {}
 
 /* -------------------------------------------------------------------- */
@@ -262,7 +262,11 @@ SourceListPkt::SourceListPkt(const SourceListPkt &pkt) :
 /* -------------------------------------------------------------------- */
 
 BankedEventPkt::BankedEventPkt(const uint8_t *data, uint32_t len) :
-	Packet(data, len), m_fields((const uint32_t *)payload())
+	Packet(data, len), m_fields(reinterpret_cast<const uint32_t *>(payload())),
+	m_curEvent(nullptr), m_lastFieldIndex(0), m_curFieldIndex(0),
+	m_sourceStartIndex(0), m_bankCount(0), m_TOFOffset(0),
+	m_isCorrected(false), m_bankNum(0), m_bankStartIndex(0),
+	m_bankId(0), m_eventCount(0)
 {
 	if (m_version == 0x00 && m_payload_len < (4 * sizeof(uint32_t))) {
 		std::stringstream ss;
@@ -289,17 +293,142 @@ BankedEventPkt::BankedEventPkt(const uint8_t *data, uint32_t len) :
 			<< m_payload_len;
 		throw invalid_packet(ss.str());
 	}
+
+	m_lastFieldIndex = (payload_length() / 4) - 1;
 }
 
 BankedEventPkt::BankedEventPkt(const BankedEventPkt &pkt) :
-	Packet(pkt), m_fields((const uint32_t *)payload())
-{}
+	Packet(pkt), m_fields(reinterpret_cast<const uint32_t *>(payload())),
+	m_curEvent(nullptr), m_lastFieldIndex(0), m_curFieldIndex(0),
+	m_sourceStartIndex(0), m_bankCount(0), m_TOFOffset(0),
+	m_isCorrected(false), m_bankNum(0), m_bankStartIndex(0),
+	m_bankId(0), m_eventCount(0)
+{
+	m_lastFieldIndex = (payload_length() / 4) - 1;
+}
+
+// The fact that events are wrapped up in banks which are wrapped up in
+// source sections is abstracted away (with the exception of checking the
+// COR flag and TOF offset fields for each source).  All we've got is
+// firstEvent() and nextEvent().  nextEvent() will be smart enough to skip
+// over the source section headers and bank headers.
+
+// A packet can have 0 or more sources and each source can have 0 or more
+// events.  That means the only payload we're guaranteed to have is the
+// first 4 fields.  After that, we've got to start checking against the
+// payload len...
+const Event *BankedEventPkt::firstEvent() const
+{
+	m_curEvent = nullptr;
+	m_curFieldIndex = 4;
+	while (m_curEvent == nullptr && m_curFieldIndex <= m_lastFieldIndex) {
+		// Start of a new source
+		firstEventInSource();
+	}
+
+	return m_curEvent;
+}
+
+const Event *BankedEventPkt::nextEvent() const
+{
+	// If we're NULL, it's because we've already incremented past the
+	// last event.
+	if (m_curEvent) {
+		m_curEvent = nullptr;
+		// Go to where the next event will start (if there is one)
+		m_curFieldIndex += 2;
+
+		// Have we passed the end of the bank?
+		if (m_curFieldIndex < (m_bankStartIndex + 2 + (2 * m_eventCount))) {
+			// This is the easy case - the next event is in the
+			// current bank
+			m_curEvent = reinterpret_cast<const Event *>(&m_fields[m_curFieldIndex]);
+		}
+		else {
+			m_bankNum++;
+			while (m_bankNum <= m_bankCount && m_curEvent == nullptr) {
+				firstEventInBank();
+				if (m_curEvent == nullptr) {
+					// Increment bankNum because there were no
+					// events in the bank we just tested
+					m_bankNum++;
+				}
+			}
+
+			// If we still haven't found an event, check for more
+			// source sections
+			while (m_curEvent == nullptr
+					&& m_curFieldIndex < m_lastFieldIndex) {
+				firstEventInSource();
+			}
+		}
+	}
+
+	return m_curEvent;
+}
+
+// Helper functions for firstEvent() & nextEvent()
+
+// Assumes m_curFieldIndex points to the start of a source section.
+// Sets m_curEvent to the first event in that source (or NULL if the
+// source is empty).  Sets m_curFieldIndex pointing at the event or at
+// the start of the next source if there were no events.
+void BankedEventPkt::firstEventInSource() const
+{
+	// index into m_fields for the start of this source
+	m_sourceStartIndex = m_curFieldIndex;
+	m_bankCount = m_fields[m_sourceStartIndex + 3];
+	if (m_bankCount > 0) {
+		// The != 0 comparison avoids a warning on MSVC about the
+		// performance of forcing a uint32_t to a bool
+		m_TOFOffset = ((m_fields[m_sourceStartIndex + 2]
+				& 0x7FFFFFFF) != 0);
+		m_isCorrected = ((m_fields[m_sourceStartIndex + 2]
+				& 0x80000000) != 0);
+		m_bankNum = 1; // banks are numbered from 1 to m_bankCount.
+		m_curFieldIndex = m_sourceStartIndex + 4;
+
+		while (m_bankNum <= m_bankCount && m_curEvent == nullptr) {
+			firstEventInBank();
+			if (m_curEvent == nullptr) {
+				// Increment bankNum because there were no
+				// events in the bank we just tested
+				m_bankNum++;
+			}
+		}
+	}
+	else {
+		// No banks in this source, skip to the next source
+		m_curFieldIndex += 4;
+		m_curEvent = nullptr;
+	}
+}
+
+// Assumes m_curFieldIndex points at the start of a bank.  Sets m_curEvent
+// to the first event in that bank (or NULL if the bank is empty).  Sets
+// m_curFieldIndex to the first event if it exists or to the start of the
+// next bank if the bank is empty, or to the start of the next source if it
+// was the last bank.
+void BankedEventPkt::firstEventInBank() const
+{
+	// index into m_fields for the start of this bank
+	m_bankStartIndex = m_curFieldIndex;
+	m_bankId = m_fields[m_bankStartIndex];
+	m_eventCount = m_fields[m_bankStartIndex + 1];
+	m_curFieldIndex = m_bankStartIndex + 2;
+	if (m_eventCount > 0) {
+		m_curEvent = reinterpret_cast<const Event *>(&m_fields[m_curFieldIndex]);
+	}
+	else {
+		m_curEvent = nullptr;
+	}
+}
 
 /* -------------------------------------------------------------------- */
 
 BankedEventStatePkt::BankedEventStatePkt(
 		const uint8_t *data, uint32_t len) :
-	Packet(data, len), m_fields((const uint32_t *)payload())
+	Packet(data, len), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {
 	if (m_version == 0x00 && m_payload_len < (4 * sizeof(uint32_t))) {
 		std::stringstream ss;
@@ -321,13 +450,14 @@ BankedEventStatePkt::BankedEventStatePkt(
 }
 
 BankedEventStatePkt::BankedEventStatePkt(const BankedEventStatePkt &pkt) :
-	Packet(pkt), m_fields((const uint32_t *)payload())
+	Packet(pkt), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {}
 
 /* -------------------------------------------------------------------- */
 
 BeamMonitorPkt::BeamMonitorPkt(const uint8_t *data, uint32_t len) :
-	Packet(data, len), m_fields((const uint32_t *)payload())
+	Packet(data, len), m_fields(reinterpret_cast<const uint32_t *>(payload())),
+	m_sectionStartIndex(0), m_eventNum(0)
 {
 	if (m_version == 0x00 && m_payload_len < (4 * sizeof(uint32_t))) {
 		std::stringstream ss;
@@ -357,33 +487,108 @@ BeamMonitorPkt::BeamMonitorPkt(const uint8_t *data, uint32_t len) :
 }
 
 BeamMonitorPkt::BeamMonitorPkt(const BeamMonitorPkt &pkt) :
-	Packet(pkt), m_fields((const uint32_t *)payload())
+	Packet(pkt), m_fields(reinterpret_cast<const uint32_t *>(payload())),
+	m_sectionStartIndex(0), m_eventNum(0)
 {}
+
+#define EVENT_COUNT_MASK	0x003FFFFF	// lower 22 bits
+
+// Returns true if there is a next section.  False if there isn't.
+bool BeamMonitorPkt::nextSection() const
+{
+	bool RV = false; // assume we're at the last section
+	unsigned newSectionStart;
+	if (m_sectionStartIndex == 0) {
+		newSectionStart = 4;
+	}
+	else {
+		unsigned eventCount =
+			m_fields[m_sectionStartIndex] & EVENT_COUNT_MASK;
+		newSectionStart = m_sectionStartIndex + 3 + eventCount;
+	}
+
+	if ((newSectionStart * 4) < m_payload_len) {
+		RV = true;
+		m_sectionStartIndex = newSectionStart;
+		m_eventNum = 0; // reset the counter for the nextEvent() function
+	}
+
+	return RV;
+}
+
+uint32_t BeamMonitorPkt::getSectionMonitorID() const
+{
+	// Monitor ID is the upper 10 bits
+	return (m_fields[m_sectionStartIndex] >> 22);
+}
+
+uint32_t BeamMonitorPkt::getSectionEventCount() const
+{
+	return m_fields[m_sectionStartIndex] & EVENT_COUNT_MASK;
+}
+
+uint32_t BeamMonitorPkt::getSectionSourceID() const
+{
+	return m_fields[m_sectionStartIndex + 1];
+}
+
+uint32_t BeamMonitorPkt::getSectionTOFOffset() const
+{
+	// need to mask off the high bit
+	return m_fields[m_sectionStartIndex + 2] & 0x7FFFFFFF;
+}
+
+bool BeamMonitorPkt::sectionTOFCorrected() const
+{
+	// only want the high bit
+	return ((m_fields[m_sectionStartIndex + 2] & 0x80000000) != 0);
+}
+
+#define CYCLE_MASK	0x7FE00000	// bits 30 to 21 (inclusive)
+#define TOF_MASK	0x001FFFFF	// bits 20 to 0 (inclusive)
+bool BeamMonitorPkt::nextEvent(
+		bool &risingEdge, uint32_t &cycle, uint32_t &tof) const
+{
+	bool RV = false;
+	if (m_sectionStartIndex != 0 && m_eventNum < getSectionEventCount()) {
+		uint32_t rawEvent =
+			m_fields[m_sectionStartIndex + 3 + m_eventNum];
+
+		risingEdge = ((rawEvent & 0x80000000) != 0);
+		cycle = (rawEvent & CYCLE_MASK) >> 21;
+		tof = (rawEvent & TOF_MASK);
+
+		m_eventNum++;
+		RV = true;
+	}
+
+	return RV;
+}
 
 /* -------------------------------------------------------------------- */
 
 PixelMappingPkt::PixelMappingPkt(const uint8_t *data, uint32_t len) :
-	Packet(data, len), m_fields((const uint32_t *)payload())
+	Packet(data, len), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {}
 
 PixelMappingPkt::PixelMappingPkt(const PixelMappingPkt &pkt) :
-	Packet(pkt), m_fields((const uint32_t *)payload())
+	Packet(pkt), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {}
 
 /* -------------------------------------------------------------------- */
 
 PixelMappingAltPkt::PixelMappingAltPkt(const uint8_t *data, uint32_t len) :
-	Packet(data, len), m_fields((const uint32_t *)payload())
+	Packet(data, len), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {}
 
 PixelMappingAltPkt::PixelMappingAltPkt(const PixelMappingAltPkt &pkt) :
-	Packet(pkt), m_fields((const uint32_t *)payload())
+	Packet(pkt), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {}
 
 /* -------------------------------------------------------------------- */
 
 RunStatusPkt::RunStatusPkt(const uint8_t *data, uint32_t len) :
-	Packet(data, len), m_fields((const uint32_t *)payload())
+	Packet(data, len), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {
 	if (m_version == 0x00 && m_payload_len != (3 * sizeof(uint32_t))) {
 		std::stringstream ss;
@@ -414,7 +619,7 @@ RunStatusPkt::RunStatusPkt(const uint8_t *data, uint32_t len) :
 }
 
 RunStatusPkt::RunStatusPkt(const RunStatusPkt &pkt) :
-	Packet(pkt), m_fields((const uint32_t *)payload())
+	Packet(pkt), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {}
 
 /* -------------------------------------------------------------------- */
@@ -422,8 +627,8 @@ RunStatusPkt::RunStatusPkt(const RunStatusPkt &pkt) :
 RunInfoPkt::RunInfoPkt(const uint8_t *data, uint32_t len) :
 	Packet(data, len)
 {
-	uint32_t size = *(const uint32_t *) payload();
-	const char *xml = (const char *) payload() + sizeof(uint32_t);
+	uint32_t size = *reinterpret_cast<const uint32_t *>(payload());
+	const char *xml = reinterpret_cast<const char *>(payload()) + sizeof(uint32_t);
 
 	if (m_version == 0x00 && m_payload_len < sizeof(uint32_t)) {
 		std::stringstream ss;
@@ -494,8 +699,8 @@ RunInfoPkt::RunInfoPkt(const RunInfoPkt &pkt) :
 TransCompletePkt::TransCompletePkt(const uint8_t *data, uint32_t len) :
 	Packet(data, len)
 {
-	uint32_t size = *(const uint32_t *) payload();
-	const char *reason = (const char *) payload() + sizeof(uint32_t);
+	uint32_t size = *reinterpret_cast<const uint32_t *>(payload());
+	const char *reason = reinterpret_cast<const char *>(payload()) + sizeof(uint32_t);
 
 	if (m_version == 0x00 && m_payload_len < sizeof(uint32_t)) {
 		std::stringstream ss;
@@ -595,7 +800,7 @@ ClientHelloPkt::ClientHelloPkt(const uint8_t *data, uint32_t len) :
 		throw invalid_packet(ss.str());
 	}
 
-	const uint32_t *fields = (const uint32_t *) payload();
+	const auto *fields = reinterpret_cast<const uint32_t *>(payload());
 
 	m_reqStart = fields[0];
 
@@ -610,7 +815,7 @@ ClientHelloPkt::ClientHelloPkt(const ClientHelloPkt &pkt) :
 /* -------------------------------------------------------------------- */
 
 AnnotationPkt::AnnotationPkt(const uint8_t *data, uint32_t len) :
-	Packet(data, len), m_fields((const uint32_t *)payload())
+	Packet(data, len), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {
 	if (m_version == 0x00 && m_payload_len < (2 * sizeof(uint32_t))) {
 		std::stringstream ss;
@@ -631,7 +836,7 @@ AnnotationPkt::AnnotationPkt(const uint8_t *data, uint32_t len) :
 	}
 
 	uint16_t size = m_fields[0] & 0xffff;
-	const char *comment = (const char *) &m_fields[2];
+	const char *comment = reinterpret_cast<const char *>(&m_fields[2]);
 	if (m_version == 0x00
 			&& m_payload_len < (size + (2 * sizeof(uint32_t)))) {
 		std::stringstream ss;
@@ -674,13 +879,13 @@ AnnotationPkt::AnnotationPkt(const uint8_t *data, uint32_t len) :
 }
 
 AnnotationPkt::AnnotationPkt(const AnnotationPkt &pkt) :
-	Packet(pkt), m_fields((const uint32_t *)payload())
+	Packet(pkt), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {}
 
 /* -------------------------------------------------------------------- */
 
 SyncPkt::SyncPkt(const uint8_t *data, uint32_t len) :
-	Packet(data, len), m_fields((const uint32_t *)payload())
+	Packet(data, len), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {
 	if (m_version == 0x00 && m_payload_len < 28) {
 		std::stringstream ss;
@@ -700,13 +905,13 @@ SyncPkt::SyncPkt(const uint8_t *data, uint32_t len) :
 		throw invalid_packet(ss.str());
 	}
 
-	const char *signature = (const char *) &m_fields[0];
+	const char *signature = reinterpret_cast<const char *>(&m_fields[0]);
 	m_signature.assign(signature, 16);
 
-	m_offset = *((uint64_t *) &m_fields[4]);
+	m_offset = *(reinterpret_cast<const uint64_t *>(&m_fields[4]));
 
 	uint32_t size = m_fields[6];
-	const char *comment = (const char *) &m_fields[7];
+	const char *comment = reinterpret_cast<const char *>(&m_fields[7]);
 	if (m_version == 0x00 && m_payload_len < (size + 28)) {
 		std::stringstream ss;
 		ss << ( (uint32_t) (m_pulseId >> 32) )
@@ -801,8 +1006,8 @@ GeometryPkt::GeometryPkt(const uint8_t *data, uint32_t len) :
 		throw invalid_packet(ss.str());
 	}
 
-	uint32_t size = *(const uint32_t *) payload();
-	const char *xml = (const char *) payload() + sizeof(uint32_t);
+	uint32_t size = *reinterpret_cast<const uint32_t *>(payload());
+	const char *xml = reinterpret_cast<const char *>(payload()) + sizeof(uint32_t);
 	if (m_version == 0x00 && m_payload_len < (size + sizeof(uint32_t))) {
 		std::stringstream ss;
 		ss << ( (uint32_t) (m_pulseId >> 32) )
@@ -854,8 +1059,8 @@ GeometryPkt::GeometryPkt(const GeometryPkt &pkt) :
 BeamlineInfoPkt::BeamlineInfoPkt(const uint8_t *data, uint32_t len) :
 	Packet(data, len)
 {
-	const char *info = (const char *) payload() + sizeof(uint32_t);
-	uint32_t sizes = *(const uint32_t *) payload();
+	const char *info = reinterpret_cast<const char *>(payload()) + sizeof(uint32_t);
+	uint32_t sizes = *reinterpret_cast<const uint32_t *>(payload());
 	uint32_t id_len, shortName_len, longName_len, info_len;
 
 	if (m_version == 0x00 && m_payload_len < sizeof(uint32_t)) {
@@ -969,7 +1174,7 @@ BeamlineInfoPkt::BeamlineInfoPkt(const BeamlineInfoPkt &pkt) :
 
 BeamMonitorConfigPkt::BeamMonitorConfigPkt(const uint8_t *data,
 		uint32_t len) :
-	Packet(data, len), m_fields((const uint32_t *)payload())
+	Packet(data, len), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {
 	// Size of Beam Monitor Config Section, Including:
 	// U32( ID, TOF Offset, Max TOF, Histo Bin Size ) + Double( Distance )
@@ -1013,7 +1218,7 @@ BeamMonitorConfigPkt::BeamMonitorConfigPkt(const uint8_t *data,
 
 BeamMonitorConfigPkt::BeamMonitorConfigPkt(
 		const BeamMonitorConfigPkt &pkt ) :
-	Packet(pkt), m_fields((const uint32_t *)payload()),
+	Packet(pkt), m_fields(reinterpret_cast<const uint32_t *>(payload())),
 		m_sectionSize(pkt.m_sectionSize)
 {}
 
@@ -1021,8 +1226,8 @@ BeamMonitorConfigPkt::BeamMonitorConfigPkt(
 
 DetectorBankSetsPkt::DetectorBankSetsPkt(const uint8_t *data,
 		uint32_t len) :
-	Packet(data, len), m_fields((const uint32_t *)payload()),
-	m_sectionOffsets(NULL), m_after_banks_offset(NULL)
+	Packet(data, len), m_fields(reinterpret_cast<const uint32_t *>(payload())),
+	m_sectionOffsets(nullptr), m_after_banks_offset(nullptr)
 {
 	// Get Number of Detector Bank Sets...
 	//    - Basic Packet Size Sanity Check
@@ -1090,9 +1295,9 @@ DetectorBankSetsPkt::DetectorBankSetsPkt(const uint8_t *data,
 			ss << " baseSectionOffsetNoBanks=" << baseSectionOffsetNoBanks;
 			ss << " payload_len=" << m_payload_len;
 			delete[] m_sectionOffsets;
-			m_sectionOffsets = (uint32_t *) NULL;
+			m_sectionOffsets = nullptr;
 			delete[] m_after_banks_offset;
-			m_after_banks_offset = (uint32_t *) NULL;
+			m_after_banks_offset = nullptr;
 			throw invalid_packet(ss.str());
 		}
 		else if ( m_version > ADARA::PacketType::DETECTOR_BANK_SETS_VERSION
@@ -1108,9 +1313,9 @@ DetectorBankSetsPkt::DetectorBankSetsPkt(const uint8_t *data,
 			ss << " baseSectionOffsetNoBanks=" << baseSectionOffsetNoBanks;
 			ss << " payload_len=" << m_payload_len;
 			delete[] m_sectionOffsets;
-			m_sectionOffsets = (uint32_t *) NULL;
+			m_sectionOffsets = nullptr;
 			delete[] m_after_banks_offset;
-			m_after_banks_offset = (uint32_t *) NULL;
+			m_after_banks_offset = nullptr;
 			throw invalid_packet(ss.str());
 		}
 
@@ -1137,9 +1342,9 @@ DetectorBankSetsPkt::DetectorBankSetsPkt(const uint8_t *data,
 		ss << " final sectionOffset=" << sectionOffset;
 		ss << " payload_len=" << m_payload_len;
 		delete[] m_sectionOffsets;
-		m_sectionOffsets = (uint32_t *) NULL;
+		m_sectionOffsets = nullptr;
 		delete[] m_after_banks_offset;
-		m_after_banks_offset = (uint32_t *) NULL;
+		m_after_banks_offset = nullptr;
 		throw invalid_packet(ss.str());
 	}
 	else if ( m_version > ADARA::PacketType::DETECTOR_BANK_SETS_VERSION
@@ -1153,17 +1358,17 @@ DetectorBankSetsPkt::DetectorBankSetsPkt(const uint8_t *data,
 		ss << " final sectionOffset=" << sectionOffset;
 		ss << " payload_len=" << m_payload_len;
 		delete[] m_sectionOffsets;
-		m_sectionOffsets = (uint32_t *) NULL;
+		m_sectionOffsets = nullptr;
 		delete[] m_after_banks_offset;
-		m_after_banks_offset = (uint32_t *) NULL;
+		m_after_banks_offset = nullptr;
 		throw invalid_packet(ss.str());
 	}
 }
 
 DetectorBankSetsPkt::DetectorBankSetsPkt(
 		const DetectorBankSetsPkt &pkt ) :
-	Packet(pkt), m_fields((const uint32_t *)payload()),
-	m_sectionOffsets(NULL), m_after_banks_offset(NULL)
+	Packet(pkt), m_fields(reinterpret_cast<const uint32_t *>(payload())),
+	m_sectionOffsets(nullptr), m_after_banks_offset(nullptr)
 {
 	uint32_t numSets = detBankSetCount();
 
@@ -1221,7 +1426,7 @@ DeviceDescriptorPkt::DeviceDescriptorPkt(
 	const uint8_t *data, uint32_t len) :
 	Packet(data, len)
 {
-	const uint32_t *fields = (const uint32_t *) payload();
+	const auto *fields = reinterpret_cast<const uint32_t *>(payload());
 	uint32_t size;
 
 	if (m_version == 0x00 && m_payload_len < (2 * sizeof(uint32_t))) {
@@ -1243,7 +1448,7 @@ DeviceDescriptorPkt::DeviceDescriptorPkt(
 	}
 
 	size = fields[1];
-	const char *desc = (const char *) &fields[2];
+	const char *desc = reinterpret_cast<const char *>(&fields[2]);
 	if (m_version == 0x00
 			&& m_payload_len < (size + (2 * sizeof(uint32_t)))) {
 		std::stringstream ss;
@@ -1288,7 +1493,7 @@ DeviceDescriptorPkt::DeviceDescriptorPkt(
 	 * rather than object construction; the user may not care.
 	 */
 	m_devId = fields[0];
-	m_desc.assign((const char *) &fields[2], size);
+	m_desc.assign(reinterpret_cast<const char *>(&fields[2]), size);
 }
 
 DeviceDescriptorPkt::DeviceDescriptorPkt(const DeviceDescriptorPkt &pkt) :
@@ -1298,7 +1503,7 @@ DeviceDescriptorPkt::DeviceDescriptorPkt(const DeviceDescriptorPkt &pkt) :
 /* -------------------------------------------------------------------- */
 
 VariableU32Pkt::VariableU32Pkt(const uint8_t *data, uint32_t len) :
-	Packet(data, len), m_fields((const uint32_t *)payload())
+	Packet(data, len), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {
 	if (m_version == 0x00 && m_payload_len != (4 * sizeof(uint32_t))) {
 		std::stringstream ss;
@@ -1338,13 +1543,13 @@ VariableU32Pkt::VariableU32Pkt(const uint8_t *data, uint32_t len) :
 }
 
 VariableU32Pkt::VariableU32Pkt(const VariableU32Pkt &pkt) :
-	Packet(pkt), m_fields((const uint32_t *)payload())
+	Packet(pkt), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {}
 
 /* -------------------------------------------------------------------- */
 
 VariableDoublePkt::VariableDoublePkt(const uint8_t *data, uint32_t len) :
-	Packet(data, len), m_fields((const uint32_t *)payload())
+	Packet(data, len), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {
 	if (m_version == 0x00
 			&& m_payload_len
@@ -1386,13 +1591,13 @@ VariableDoublePkt::VariableDoublePkt(const uint8_t *data, uint32_t len) :
 }
 
 VariableDoublePkt::VariableDoublePkt(const VariableDoublePkt &pkt) :
-	Packet(pkt), m_fields((const uint32_t *)payload())
+	Packet(pkt), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {}
 
 /* -------------------------------------------------------------------- */
 
 VariableStringPkt::VariableStringPkt(const uint8_t *data, uint32_t len) :
-	Packet(data, len), m_fields((const uint32_t *)payload())
+	Packet(data, len), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {
 	uint32_t size;
 
@@ -1415,7 +1620,7 @@ VariableStringPkt::VariableStringPkt(const uint8_t *data, uint32_t len) :
 	}
 
 	size = m_fields[3];
-	const char *str = (const char *) &m_fields[4];
+	const char *str = reinterpret_cast<const char *>(&m_fields[4]);
 	if (m_version == 0x00
 			&& m_payload_len < (size + (4 * sizeof(uint32_t)))) {
 		std::stringstream ss;
@@ -1478,18 +1683,18 @@ VariableStringPkt::VariableStringPkt(const uint8_t *data, uint32_t len) :
 	/* TODO it would be better to create the string on access
 	 * rather than object construction; the user may not care.
 	 */
-	m_val.assign((const char *) &m_fields[4], size);
+	m_val.assign(reinterpret_cast<const char *>(&m_fields[4]), size);
 }
 
 VariableStringPkt::VariableStringPkt(const VariableStringPkt &pkt) :
-	Packet(pkt), m_fields((const uint32_t *)payload()), m_val(pkt.m_val)
+	Packet(pkt), m_fields(reinterpret_cast<const uint32_t *>(payload())), m_val(pkt.m_val)
 {}
 
 /* -------------------------------------------------------------------- */
 
 VariableU32ArrayPkt::VariableU32ArrayPkt(
 		const uint8_t *data, uint32_t len ) :
-	Packet(data, len), m_fields((const uint32_t *)payload())
+	Packet(data, len), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {
 	uint32_t count;
 	size_t size;
@@ -1560,18 +1765,18 @@ VariableU32ArrayPkt::VariableU32ArrayPkt(
 	 */
 	m_val = std::vector<uint32_t>( count );
 	memcpy(const_cast<uint32_t *> (m_val.data()),
-		(const uint32_t *) &m_fields[4], count * sizeof(uint32_t));
+		reinterpret_cast<const uint32_t *>(&m_fields[4]), count * sizeof(uint32_t));
 }
 
 VariableU32ArrayPkt::VariableU32ArrayPkt(const VariableU32ArrayPkt &pkt) :
-	Packet(pkt), m_fields((const uint32_t *)payload()), m_val(pkt.m_val)
+	Packet(pkt), m_fields(reinterpret_cast<const uint32_t *>(payload())), m_val(pkt.m_val)
 {}
 
 /* -------------------------------------------------------------------- */
 
 VariableDoubleArrayPkt::VariableDoubleArrayPkt(
 		const uint8_t *data, uint32_t len ) :
-	Packet(data, len), m_fields((const uint32_t *)payload())
+	Packet(data, len), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {
 	uint32_t count;
 	size_t size;
@@ -1642,18 +1847,18 @@ VariableDoubleArrayPkt::VariableDoubleArrayPkt(
 	 */
 	m_val = std::vector<double>( count );
 	memcpy(const_cast<double *> (m_val.data()),
-		(const double *) &m_fields[4], count * sizeof(double));
+		reinterpret_cast<const double *>(&m_fields[4]), count * sizeof(double));
 }
 
 VariableDoubleArrayPkt::VariableDoubleArrayPkt(
 		const VariableDoubleArrayPkt &pkt ) :
-	Packet(pkt), m_fields((const uint32_t *)payload()), m_val(pkt.m_val)
+	Packet(pkt), m_fields(reinterpret_cast<const uint32_t *>(payload())), m_val(pkt.m_val)
 {}
 
 /* -------------------------------------------------------------------- */
 
 MultVariableU32Pkt::MultVariableU32Pkt(const uint8_t *data, uint32_t len) :
-	Packet(data, len), m_fields((const uint32_t *)payload())
+	Packet(data, len), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {
 	uint32_t numVals;
 	size_t size;
@@ -1724,7 +1929,7 @@ MultVariableU32Pkt::MultVariableU32Pkt(const uint8_t *data, uint32_t len) :
 
 	// Copy Over NumValues TOF and U32 Values from Payload...
 
-	const uint32_t *ptr = (const uint32_t *) &m_fields[4];
+	const uint32_t *ptr = reinterpret_cast<const uint32_t *>(&m_fields[4]);
 
 	/* TODO it would be better to create the array on access
 	 * rather than object construction; the user may not care.
@@ -1741,7 +1946,7 @@ MultVariableU32Pkt::MultVariableU32Pkt(const uint8_t *data, uint32_t len) :
 }
 
 MultVariableU32Pkt::MultVariableU32Pkt(const MultVariableU32Pkt &pkt) :
-	Packet(pkt), m_fields((const uint32_t *)payload()),
+	Packet(pkt), m_fields(reinterpret_cast<const uint32_t *>(payload())),
 	m_vals(pkt.m_vals), m_tofs(pkt.m_tofs)
 {}
 
@@ -1749,7 +1954,7 @@ MultVariableU32Pkt::MultVariableU32Pkt(const MultVariableU32Pkt &pkt) :
 
 MultVariableDoublePkt::MultVariableDoublePkt(
 		const uint8_t *data, uint32_t len) :
-	Packet(data, len), m_fields((const uint32_t *)payload())
+	Packet(data, len), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {
 	uint32_t numVals;
 	size_t size;
@@ -1826,7 +2031,7 @@ MultVariableDoublePkt::MultVariableDoublePkt(
 
 	// Copy Over NumValues TOF and Double Values from Payload...
 
-	const uint32_t *ptr = (const uint32_t *) &m_fields[4];
+	const uint32_t *ptr = reinterpret_cast<const uint32_t *>(&m_fields[4]);
 
 	/* TODO it would be better to create the array on access
 	 * rather than object construction; the user may not care.
@@ -1838,13 +2043,13 @@ MultVariableDoublePkt::MultVariableDoublePkt(
 		m_tofs.push_back( *ptr++ );
 
 		// Next Double Value...
-		m_vals.push_back( *((double *)ptr++) );
+		m_vals.push_back( *(reinterpret_cast<const double *>(ptr++)) );
 	}
 }
 
 MultVariableDoublePkt::MultVariableDoublePkt(
 		const MultVariableDoublePkt &pkt) :
-	Packet(pkt), m_fields((const uint32_t *)payload()),
+	Packet(pkt), m_fields(reinterpret_cast<const uint32_t *>(payload())),
 	m_vals(pkt.m_vals), m_tofs(pkt.m_tofs)
 {}
 
@@ -1852,7 +2057,7 @@ MultVariableDoublePkt::MultVariableDoublePkt(
 
 MultVariableStringPkt::MultVariableStringPkt(
 		const uint8_t *data, uint32_t len) :
-	Packet(data, len), m_fields((const uint32_t *)payload())
+	Packet(data, len), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {
 	uint32_t numVals;
 	uint32_t size;
@@ -1923,7 +2128,7 @@ MultVariableStringPkt::MultVariableStringPkt(
 
 	// Check & Copy Over NumValues Strings from Payload...
 
-	const uint32_t *ptr = (const uint32_t *) &m_fields[4];
+	const uint32_t *ptr = reinterpret_cast<const uint32_t *>(&m_fields[4]);
 	uint32_t payload_remaining = m_payload_len - (4 * sizeof(uint32_t));
 
 	for ( uint32_t i=0 ; i < numVals ; i++ ) {
@@ -1935,7 +2140,7 @@ MultVariableStringPkt::MultVariableStringPkt(
 		size = *ptr++;
 
 		// Next String...
-		const char *str = (const char *) ptr;
+		const char *str = reinterpret_cast<const char *>(ptr);
 
 		if (m_version == 0x00
 				&& payload_remaining < (size + (2 * sizeof(uint32_t)))) {
@@ -1993,7 +2198,7 @@ MultVariableStringPkt::MultVariableStringPkt(
 
 MultVariableStringPkt::MultVariableStringPkt(
 		const MultVariableStringPkt &pkt) :
-	Packet(pkt), m_fields((const uint32_t *)payload()),
+	Packet(pkt), m_fields(reinterpret_cast<const uint32_t *>(payload())),
 	m_vals(pkt.m_vals), m_tofs(pkt.m_tofs)
 {}
 
@@ -2001,7 +2206,7 @@ MultVariableStringPkt::MultVariableStringPkt(
 
 MultVariableU32ArrayPkt::MultVariableU32ArrayPkt(
 		const uint8_t *data, uint32_t len ) :
-	Packet(data, len), m_fields((const uint32_t *)payload())
+	Packet(data, len), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {
 	uint32_t numVals;
 	size_t size;
@@ -2075,7 +2280,7 @@ MultVariableU32ArrayPkt::MultVariableU32ArrayPkt(
 
 	// Check & Copy Over NumValues U32 Arrays from Payload...
 
-	const uint32_t *ptr = (const uint32_t *) &m_fields[4];
+	const uint32_t *ptr = reinterpret_cast<const uint32_t *>(&m_fields[4]);
 	uint32_t payload_remaining = m_payload_len - (4 * sizeof(uint32_t));
 
 	for ( uint32_t i=0 ; i < numVals ; i++ ) {
@@ -2087,7 +2292,7 @@ MultVariableU32ArrayPkt::MultVariableU32ArrayPkt(
 		size = *ptr++;
 
 		// Next U32 Array...
-		const uint32_t *arr = (const uint32_t *) ptr;
+		const uint32_t *arr = reinterpret_cast<const uint32_t *>(ptr);
 
 		if (m_version == 0x00
 				&& payload_remaining < (( size + 2 ) * sizeof(uint32_t))) {
@@ -2125,7 +2330,7 @@ MultVariableU32ArrayPkt::MultVariableU32ArrayPkt(
 
 MultVariableU32ArrayPkt::MultVariableU32ArrayPkt(
 		const MultVariableU32ArrayPkt &pkt) :
-	Packet(pkt), m_fields((const uint32_t *)payload()),
+	Packet(pkt), m_fields(reinterpret_cast<const uint32_t *>(payload())),
 	m_vals(pkt.m_vals), m_tofs(pkt.m_tofs)
 {}
 
@@ -2133,7 +2338,7 @@ MultVariableU32ArrayPkt::MultVariableU32ArrayPkt(
 
 MultVariableDoubleArrayPkt::MultVariableDoubleArrayPkt(
 		const uint8_t *data, uint32_t len ) :
-	Packet(data, len), m_fields((const uint32_t *)payload())
+	Packet(data, len), m_fields(reinterpret_cast<const uint32_t *>(payload()))
 {
 	uint32_t numVals;
 	size_t size;
@@ -2209,7 +2414,7 @@ MultVariableDoubleArrayPkt::MultVariableDoubleArrayPkt(
 
 	// Check & Copy Over NumValues Double Arrays from Payload...
 
-	const uint32_t *ptr = (const uint32_t *) &m_fields[4];
+	const uint32_t *ptr = reinterpret_cast<const uint32_t *>(&m_fields[4]);
 	uint32_t payload_remaining = m_payload_len - (4 * sizeof(uint32_t));
 
 	for ( uint32_t i=0 ; i < numVals ; i++ ) {
@@ -2221,7 +2426,7 @@ MultVariableDoubleArrayPkt::MultVariableDoubleArrayPkt(
 		size = *ptr++;
 
 		// Next Double Array...
-		const double *arr = (const double *) ptr;
+		const double *arr = reinterpret_cast<const double *>(ptr);
 
 		if (m_version == 0x00
 				&& payload_remaining
@@ -2266,7 +2471,7 @@ MultVariableDoubleArrayPkt::MultVariableDoubleArrayPkt(
 
 MultVariableDoubleArrayPkt::MultVariableDoubleArrayPkt(
 		const MultVariableDoubleArrayPkt &pkt ) :
-	Packet(pkt), m_fields((const uint32_t *)payload()),
+	Packet(pkt), m_fields(reinterpret_cast<const uint32_t *>(payload())),
 	m_vals(pkt.m_vals), m_tofs(pkt.m_tofs)
 {}
 

@@ -17,7 +17,7 @@ namespace ADARA {
 class PacketHeader {
 public:
 	PacketHeader(const uint8_t *data) {
-		const uint32_t *field = (const uint32_t *) data;
+		const uint32_t *field = reinterpret_cast<const uint32_t *>(data);
 
 		m_payload_len = field[0];
 
@@ -37,15 +37,15 @@ public:
 		m_pulseId |= field[3];
 	}
 
-	uint32_t type(void) const { return m_type; }
-	PacketType::Type base_type(void) const { return m_base_type; }
-	PacketType::Version version(void) const { return m_version; }
-	uint32_t payload_length(void) const { return m_payload_len; }
-	const struct timespec &timestamp(void) const { return m_timestamp; }
-	uint64_t pulseId(void) const { return m_pulseId; }
-	uint32_t packet_length(void) const { return m_payload_len + 16; }
+	uint32_t type() const { return m_type; }
+	PacketType::Type base_type() const { return m_base_type; }
+	PacketType::Version version() const { return m_version; }
+	uint32_t payload_length() const { return m_payload_len; }
+	const struct timespec &timestamp() const { return m_timestamp; }
+	uint64_t pulseId() const { return m_pulseId; }
+	uint32_t packet_length() const { return m_payload_len + 16; }
 
-	static uint32_t header_length(void) { return 16; }
+	static uint32_t header_length() { return 16; }
 
 protected:
 	uint32_t m_payload_len;
@@ -66,8 +66,8 @@ public:
 
 	virtual ~Packet();
 
-	const uint8_t *packet(void) const { return m_data; }
-	const uint8_t *payload(void) const {
+	const uint8_t *packet() const { return m_data; }
+	const uint8_t *payload() const {
 		return m_data + header_length();
 	}
 
@@ -107,41 +107,41 @@ class RawDataPkt : public Packet {
 public:
 	RawDataPkt(const RawDataPkt &pkt);
 
-	uint32_t sourceID(void) const { return m_fields[0]; }
-	bool endOfPulse(void) const { return !!(m_fields[1] & 0x80000000); }
-	uint32_t pulseSeq(void) const { return (m_fields[1] >> 16) & 0x7fff; }
-	uint32_t maxPulseSeq(void) const { return ( 0x7fff + 1 ); }
-	uint32_t sourceSeq(void) const { return m_fields[1] & 0xffff; }
-	uint32_t maxSourceSeq(void) const { return ( 0xffff + 1 ); }
+	uint32_t sourceID() const { return m_fields[0]; }
+	bool endOfPulse() const { return !!(m_fields[1] & 0x80000000); }
+	uint32_t pulseSeq() const { return (m_fields[1] >> 16) & 0x7fff; }
+	uint32_t maxPulseSeq() const { return ( 0x7fff + 1 ); }
+	uint32_t sourceSeq() const { return m_fields[1] & 0xffff; }
+	uint32_t maxSourceSeq() const { return ( 0xffff + 1 ); }
 
-	bool gotDataFlags(void) const { return m_version >= 0x01; }
-	uint32_t dataFlags(void) const {
+	bool gotDataFlags() const { return m_version >= 0x01; }
+	uint32_t dataFlags() const {
 		if ( gotDataFlags() )
 			return (m_fields[2] >> 27) & 0x1f;
 		else return 0;
 	}
-	PulseFlavor::Enum flavor(void) const {
+	PulseFlavor::Enum flavor() const {
 		return static_cast<PulseFlavor::Enum>
 						((m_fields[2] >> 24) & 0x7);
 	}
-	uint32_t pulseCharge(void) const { return m_fields[2] & 0x00ffffff; }
+	uint32_t pulseCharge() const { return m_fields[2] & 0x00ffffff; }
 
-	bool badVeto(void) const { return !!(m_fields[3] & 0x80000000); }
-	bool badCycle(void) const { return !!(m_fields[3] & 0x40000000); }
-	uint8_t timingStatus(void) const {
+	bool badVeto() const { return !!(m_fields[3] & 0x80000000); }
+	bool badCycle() const { return !!(m_fields[3] & 0x40000000); }
+	uint8_t timingStatus() const {
 		return (uint8_t) (m_fields[3] >> 22);
 	}
-	uint16_t vetoFlags(void) const { return (m_fields[3] >> 10) & 0xfff; }
-	uint16_t cycle(void) const { return m_fields[3] & 0x3ff; }
+	uint16_t vetoFlags() const { return (m_fields[3] >> 10) & 0xfff; }
+	uint16_t cycle() const { return m_fields[3] & 0x3ff; }
 
-	uint32_t intraPulseTime(void) const { return m_fields[4]; }
+	uint32_t intraPulseTime() const { return m_fields[4]; }
 
-	bool tofCorrected(void) const { return !!(m_fields[5] & 0x80000000); }
-	uint32_t tofOffset(void) const { return m_fields[5] & 0x7fffffff; }
-	uint32_t tofField(void) const { return m_fields[5]; }
+	bool tofCorrected() const { return !!(m_fields[5] & 0x80000000); }
+	uint32_t tofOffset() const { return m_fields[5] & 0x7fffffff; }
+	uint32_t tofField() const { return m_fields[5]; }
 
-	const Event *events(void) const { return (const Event *) &m_fields[6]; }
-	uint32_t num_events(void) const {
+	const Event *events() const { return reinterpret_cast<const Event *>(&m_fields[6]); }
+	uint32_t num_events() const {
 		return (m_payload_len - 24) / (uint32_t) (2 * sizeof(uint32_t));
 	}
 
@@ -167,43 +167,43 @@ class RTDLPkt : public Packet {
 public:
 	RTDLPkt(const RTDLPkt &pkt);
 
-	bool gotDataFlags(void) const { return m_version >= 0x01; }
-	uint32_t dataFlags(void) const {
+	bool gotDataFlags() const { return m_version >= 0x01; }
+	uint32_t dataFlags() const {
 		if ( gotDataFlags() )
 			return (m_fields[0] >> 27) & 0x1f;
 		else return 0;
 	}
 
-	PulseFlavor::Enum flavor(void) const {
+	PulseFlavor::Enum flavor() const {
 		return static_cast<PulseFlavor::Enum>
 						((m_fields[0] >> 24) & 0x7);
 	}
 
-	uint32_t pulseCharge(void) const { return m_fields[0] & 0x00ffffff; }
+	uint32_t pulseCharge() const { return m_fields[0] & 0x00ffffff; }
 
 	void setPulseCharge(uint32_t pulseCharge) {
 		m_fields[0] &= 0xff000000;
 		m_fields[0] |= pulseCharge & 0x00ffffff;
 	}
 
-	bool badVeto(void) const { return !!(m_fields[1] & 0x80000000); }
-	bool badCycle(void) const { return !!(m_fields[1] & 0x40000000); }
-	uint8_t timingStatus(void) const {
+	bool badVeto() const { return !!(m_fields[1] & 0x80000000); }
+	bool badCycle() const { return !!(m_fields[1] & 0x40000000); }
+	uint8_t timingStatus() const {
 		return (uint8_t) (m_fields[1] >> 22);
 	}
 
-	uint16_t vetoFlags(void) const { return (m_fields[1] >> 10) & 0xfff; }
+	uint16_t vetoFlags() const { return (m_fields[1] >> 10) & 0xfff; }
 
 	void setVetoFlags(uint16_t vetoFlags) {
 		m_fields[1] &= 0xffc003ff;
 		m_fields[1] |= ( vetoFlags & 0xfff ) << 10;
 	}
 
-	uint16_t cycle(void) const { return m_fields[1] & 0x3ff; }
-	uint32_t intraPulseTime(void) const { return m_fields[2]; }
-	bool tofCorrected(void) const { return !!(m_fields[3] & 0x80000000); }
-	uint32_t tofOffset(void) const { return m_fields[3] & 0x7fffffff; }
-	uint32_t ringPeriod(void) const { return m_fields[4] & 0xffffff; }
+	uint16_t cycle() const { return m_fields[1] & 0x3ff; }
+	uint32_t intraPulseTime() const { return m_fields[2]; }
+	bool tofCorrected() const { return !!(m_fields[3] & 0x80000000); }
+	uint32_t tofOffset() const { return m_fields[3] & 0x7fffffff; }
+	uint32_t ringPeriod() const { return m_fields[4] & 0xffffff; }
 
 	// accessor methods for optional FNA/Frame Data fields
 
@@ -238,8 +238,8 @@ class SourceListPkt : public Packet {
 public:
 	SourceListPkt(const SourceListPkt &pkt);
 
-	const uint32_t *ids(void) const { return (const uint32_t *) payload(); }
-	uint32_t num_ids(void) const {
+	const uint32_t *ids() const { return reinterpret_cast<const uint32_t *>(payload()); }
+	uint32_t num_ids() const {
 		return (uint32_t) payload_length() / (uint32_t) sizeof(uint32_t);
 	}
 
@@ -267,18 +267,45 @@ class BankedEventPkt : public Packet {
 public:
 	BankedEventPkt(const BankedEventPkt &pkt);
 
-	uint32_t pulseCharge(void) const { return m_fields[0]; }
-	uint32_t pulseEnergy(void) const { return m_fields[1]; }
-	uint32_t cycle(void) const { return m_fields[2]; }
-	uint32_t vetoFlags(void) const { return (m_fields[3] >> 20) & 0xfff; }
-	uint32_t flags(void) const { return m_fields[3] & 0xfffff; }
+	uint32_t pulseCharge() const { return m_fields[0]; }
+	uint32_t pulseEnergy() const { return m_fields[1]; }
+	uint32_t cycle() const { return m_fields[2]; }
+	uint32_t vetoFlags() const { return (m_fields[3] >> 20) & 0xfff; }
+	uint32_t flags() const { return m_fields[3] & 0xfffff; }
 
-	// TODO implment bank/event accessors
+	// The source, bank and event accessors all return NULL if we've
+	// incremented past the end of the packet's data.
+	const Event *firstEvent() const;
+	const Event *nextEvent() const;
+	bool getSourceCORFlag() const { return m_isCorrected; }
+	uint32_t getSourceTOFOffset() const { return m_TOFOffset; }
+	uint32_t curBankId() const { return m_bankId; }
+	uint32_t curEventCount() const { return m_eventCount; }
 
 private:
 	const uint32_t *m_fields;
 
+	mutable const Event *m_curEvent;
+	mutable unsigned m_lastFieldIndex;	// index into m_fields for the last valid field in the packet
+	mutable unsigned m_curFieldIndex;	// where we currently are in the packet
+
+	// Data about the current source section
+	mutable unsigned m_sourceStartIndex;	// index into m_fields for the start of this source
+	mutable uint32_t m_bankCount;
+	mutable uint32_t m_TOFOffset;
+	mutable bool m_isCorrected;
+	mutable unsigned m_bankNum;		// which bank are we currently in (relative to the start of the section)
+
+	// Data about the current bank
+	mutable unsigned m_bankStartIndex;	// index into m_fields for the start of this bank
+	mutable uint32_t m_bankId;
+	mutable uint32_t m_eventCount;
+
 	BankedEventPkt(const uint8_t *data, uint32_t len);
+
+	// Two helper functions for firstEvent() & nextEvent()
+	void firstEventInSource() const;
+	void firstEventInBank() const;
 
 	friend class Parser;
 };
@@ -287,11 +314,11 @@ class BankedEventStatePkt : public Packet {
 public:
 	BankedEventStatePkt(const BankedEventStatePkt &pkt);
 
-	uint32_t pulseCharge(void) const { return m_fields[0]; }
-	uint32_t pulseEnergy(void) const { return m_fields[1]; }
-	uint32_t cycle(void) const { return m_fields[2]; }
-	uint32_t vetoFlags(void) const { return (m_fields[3] >> 20) & 0xfff; }
-	uint32_t flags(void) const { return m_fields[3] & 0xfffff; }
+	uint32_t pulseCharge() const { return m_fields[0]; }
+	uint32_t pulseEnergy() const { return m_fields[1]; }
+	uint32_t cycle() const { return m_fields[2]; }
+	uint32_t vetoFlags() const { return (m_fields[3] >> 20) & 0xfff; }
+	uint32_t flags() const { return m_fields[3] & 0xfffff; }
 
 	// TODO implment bank/event accessors
 
@@ -307,16 +334,30 @@ class BeamMonitorPkt : public Packet {
 public:
 	BeamMonitorPkt(const BeamMonitorPkt &pkt);
 
-	uint32_t pulseCharge(void) const { return m_fields[0]; }
-	uint32_t pulseEnergy(void) const { return m_fields[1]; }
-	uint32_t cycle(void) const { return m_fields[2]; }
-	uint32_t vetoFlags(void) const { return (m_fields[3] >> 20) & 0xfff; }
-	uint32_t flags(void) const { return m_fields[3] & 0xfffff; }
+	uint32_t pulseCharge() const { return m_fields[0]; }
+	uint32_t pulseEnergy() const { return m_fields[1]; }
+	uint32_t cycle() const { return m_fields[2]; }
+	uint32_t vetoFlags() const { return (m_fields[3] >> 20) & 0xfff; }
+	uint32_t flags() const { return m_fields[3] & 0xfffff; }
 
-	// TODO implment monitor/event accessors
+	bool nextSection() const;	// iterate over the sections in the packet
+
+	// Section-specific functions.  These require either firstSection() or
+	// nextSection() to have run successfully before they will return valid
+	// data.
+	uint32_t getSectionMonitorID() const;
+	uint32_t getSectionEventCount() const;
+	uint32_t getSectionSourceID() const;
+	uint32_t getSectionTOFOffset() const;
+	bool sectionTOFCorrected() const;
+	bool nextEvent(bool &risingEdge, uint32_t &cycle, uint32_t &tof) const;
 
 private:
 	const uint32_t *m_fields;
+
+	// Data about the current monitor section
+	mutable uint32_t m_sectionStartIndex;	// index into m_fields for the start of this section
+	mutable uint32_t m_eventNum;		// used to keep nextEvent from running past the end of the section
 
 	BeamMonitorPkt(const uint8_t *data, uint32_t len);
 
@@ -328,8 +369,8 @@ public:
 	PixelMappingPkt(const PixelMappingPkt &pkt);
 
 	// TODO implement accessors for fields
-	const uint8_t *mappingData(void) const {
-		return( (const uint8_t *) &(m_fields[0]) );
+	const uint8_t *mappingData() const {
+		return( reinterpret_cast<const uint8_t *>(&(m_fields[0])) );
 	}
 
 private:
@@ -345,9 +386,9 @@ public:
 	PixelMappingAltPkt(const PixelMappingAltPkt &pkt);
 
 	// TODO implement accessors for fields
-	uint32_t numBanks(void) const { return m_fields[0]; }
-	const uint8_t *mappingData(void) const {
-		return( (const uint8_t *) &(m_fields[1]) );
+	uint32_t numBanks() const { return m_fields[0]; }
+	const uint8_t *mappingData() const {
+		return( reinterpret_cast<const uint8_t *>(&(m_fields[1])) );
 	}
 
 private:
@@ -362,10 +403,10 @@ class RunStatusPkt : public Packet {
 public:
 	RunStatusPkt(const RunStatusPkt &pkt);
 
-	uint32_t runNumber(void) const { return m_fields[0]; }
-	uint32_t runStart(void) const { return m_fields[1]; }
-	uint32_t fileNumber(void) const { return m_fields[2] & 0xffffff; }
-	RunStatus::Enum status(void) const {
+	uint32_t runNumber() const { return m_fields[0]; }
+	uint32_t runStart() const { return m_fields[1]; }
+	uint32_t fileNumber() const { return m_fields[2] & 0xffffff; }
+	RunStatus::Enum status() const {
 		return static_cast<RunStatus::Enum>(m_fields[2] >> 24);
 	}
 
@@ -375,25 +416,25 @@ public:
 		field[1] = runStart;
 	}
 
-	uint32_t pauseFileNumber(void) const {
+	uint32_t pauseFileNumber() const {
 		if ( m_version >= 0x01 ) {
 			return m_fields[3] & 0xffffff;
 		}
 		else return( 0 );
 	}
-	uint32_t paused(void) const {
+	uint32_t paused() const {
 		if ( m_version >= 0x01 ) {
 			return m_fields[3] >> 24;
 		}
 		else return( 0 );
 	}
-	uint32_t addendumFileNumber(void) const {
+	uint32_t addendumFileNumber() const {
 		if ( m_version >= 0x01 ) {
 			return m_fields[4] & 0xffffff;
 		}
 		else return( 0 );
 	}
-	uint32_t addendum(void) const {
+	uint32_t addendum() const {
 		if ( m_version >= 0x01 ) {
 			return m_fields[4] >> 24;
 		}
@@ -412,7 +453,7 @@ class RunInfoPkt : public Packet {
 public:
 	RunInfoPkt(const RunInfoPkt &pkt);
 
-	const std::string &info(void) const { return m_xml; }
+	const std::string &info() const { return m_xml; }
 
 private:
 	std::string m_xml;
@@ -426,8 +467,8 @@ class TransCompletePkt : public Packet {
 public:
 	TransCompletePkt(const TransCompletePkt &pkt);
 
-	uint16_t status(void) const { return m_status; }
-	const std::string &reason(void) const { return m_reason; }
+	uint16_t status() const { return m_status; }
+	const std::string &reason() const { return m_reason; }
 
 private:
 	uint16_t m_status;
@@ -448,8 +489,8 @@ public:
 		SEND_PAUSE_DATA   = 0x0002,
 	};
 
-	uint32_t requestedStartTime(void) const { return m_reqStart; }
-	uint32_t clientFlags(void) const { return m_clientFlags; }
+	uint32_t requestedStartTime() const { return m_reqStart; }
+	uint32_t clientFlags() const { return m_clientFlags; }
 
 private:
 	uint32_t m_reqStart;
@@ -464,15 +505,15 @@ class AnnotationPkt : public Packet {
 public:
 	AnnotationPkt(const AnnotationPkt &pkt);
 
-	bool resetHint(void) const { return !!(m_fields[0] & 0x80000000); }
-	MarkerType::Enum marker_type(void) const {
+	bool resetHint() const { return !!(m_fields[0] & 0x80000000); }
+	MarkerType::Enum marker_type() const {
 		uint16_t type = (m_fields[0] >> 16) & 0x7fff;
 		return static_cast<MarkerType::Enum>(type);
 	}
-	uint32_t scanIndex(void) const { return m_fields[1]; }
-	const std::string &comment(void) const {
+	uint32_t scanIndex() const { return m_fields[1]; }
+	const std::string &comment() const {
 		if (!m_comment.length() && (m_fields[0] & 0xffff)) {
-			m_comment.assign((const char *) &m_fields[2],
+			m_comment.assign(reinterpret_cast<const char *>(&m_fields[2]),
 					 m_fields[0] & 0xffff);
 		}
 
@@ -492,9 +533,9 @@ class SyncPkt : public Packet {
 public:
 	SyncPkt(const SyncPkt &pkt);
 
-	const std::string signature(void) const { return m_signature; }
-	uint64_t fileOffset(void) const { return m_offset; }
-	const std::string comment(void) const { return m_comment; }
+	const std::string signature() const { return m_signature; }
+	uint64_t fileOffset() const { return m_offset; }
+	const std::string comment() const { return m_comment; }
 
 private:
 	const uint32_t *m_fields;
@@ -521,7 +562,7 @@ class GeometryPkt : public Packet {
 public:
 	GeometryPkt(const GeometryPkt &pkt);
 
-	const std::string &info(void) const { return m_xml; }
+	const std::string &info() const { return m_xml; }
 
 private:
 	std::string m_xml;
@@ -535,12 +576,12 @@ class BeamlineInfoPkt : public Packet {
 public:
 	BeamlineInfoPkt(const BeamlineInfoPkt &pkt);
 
-	const uint32_t &targetStationNumber(void) const
+	const uint32_t &targetStationNumber() const
 		{ return m_targetStationNumber; }
 
-	const std::string &id(void) const { return m_id; }
-	const std::string &shortName(void) const { return m_shortName; }
-	const std::string &longName(void) const { return m_longName; }
+	const std::string &id() const { return m_id; }
+	const std::string &shortName() const { return m_shortName; }
+	const std::string &longName() const { return m_longName; }
 
 private:
 	uint32_t m_targetStationNumber;
@@ -563,13 +604,13 @@ class BeamMonitorConfigPkt : public Packet {
 public:
 	BeamMonitorConfigPkt(const BeamMonitorConfigPkt &pkt);
 
-	uint32_t beamMonCount(void) const { return m_fields[0]; }
+	uint32_t beamMonCount() const { return m_fields[0]; }
 
 	uint32_t bmonId(uint32_t index) const
 	{
 		if ( index < beamMonCount() ) {
 			const uint32_t *section =
-				(const uint32_t *) ( ((const char *) m_fields)
+				reinterpret_cast<const uint32_t *>( reinterpret_cast<const char *>(m_fields)
 					+ sizeof(uint32_t) + ( index * m_sectionSize ) );
 			return( section[0] );
 		}
@@ -581,7 +622,7 @@ public:
 	{
 		if ( index < beamMonCount() ) {
 			const uint32_t *section =
-				(const uint32_t *) ( ((const char *) m_fields)
+				reinterpret_cast<const uint32_t *>( reinterpret_cast<const char *>(m_fields)
 					+ sizeof(uint32_t) + ( index * m_sectionSize ) );
 			return( section[1] );
 		}
@@ -593,7 +634,7 @@ public:
 	{
 		if ( index < beamMonCount() ) {
 			const uint32_t *section =
-				(const uint32_t *) ( ((const char *) m_fields)
+				reinterpret_cast<const uint32_t *>( reinterpret_cast<const char *>(m_fields)
 					+ sizeof(uint32_t) + ( index * m_sectionSize ) );
 			return( section[2] );
 		}
@@ -605,7 +646,7 @@ public:
 	{
 		if ( index < beamMonCount() ) {
 			const uint32_t *section =
-				(const uint32_t *) ( ((const char *) m_fields)
+				reinterpret_cast<const uint32_t *>( reinterpret_cast<const char *>(m_fields)
 					+ sizeof(uint32_t) + ( index * m_sectionSize ) );
 			return( section[3] );
 		}
@@ -617,9 +658,9 @@ public:
 	{
 		if ( index < beamMonCount() ) {
 			const uint32_t *section =
-				(const uint32_t *) ( ((const char *) m_fields)
+				reinterpret_cast<const uint32_t *>( reinterpret_cast<const char *>(m_fields)
 					+ sizeof(uint32_t) + ( index * m_sectionSize ) );
-			return( *( (const double *) &(section[4]) ) );
+			return( *( reinterpret_cast<const double *>(&(section[4])) ) );
 		}
 		else
 			return( 0.0 );
@@ -634,7 +675,7 @@ public:
 			if ( index < beamMonCount() ) {
 				// Trailing "Format Appendix" Section... ;-b
 				const uint32_t *format_section =
-					(const uint32_t *) ( ((const char *) m_fields)
+					reinterpret_cast<const uint32_t *>( reinterpret_cast<const char *>(m_fields)
 						+ sizeof(uint32_t)
 						+ ( beamMonCount() * m_sectionSize ) );
 				return( format_section[ index ] );
@@ -682,7 +723,7 @@ public:
 	// Throttle Suffix, alphanumeric, no spaces/punctuation...
 	static const size_t THROTTLE_SUFFIX_SIZE = 16;
 
-	uint32_t detBankSetCount(void) const { return m_fields[0]; }
+	uint32_t detBankSetCount() const { return m_fields[0]; }
 
 	uint32_t sectionOffset(uint32_t index) const
 	{
@@ -696,9 +737,9 @@ public:
 	{
 		if ( index < detBankSetCount() ) {
 			char name_c[SET_NAME_SIZE + 1];   // give them an inch...
-			memset( (void *) name_c, '\0', SET_NAME_SIZE + 1 );
+			memset( reinterpret_cast<void *>(name_c), '\0', SET_NAME_SIZE + 1 );
 			strncpy(name_c,
-				(const char *) &(m_fields[ m_sectionOffsets[index] ]),
+				reinterpret_cast<const char *>(&(m_fields[ m_sectionOffsets[index] ])),
 				SET_NAME_SIZE);
 			return( std::string(name_c) );
 		} else {
@@ -725,12 +766,12 @@ public:
 	const uint32_t *banklist(uint32_t index) const
 	{
 		if ( index < detBankSetCount() ) {
-			return (const uint32_t *) &m_fields[ m_sectionOffsets[index]
-				+ m_name_offset + 2 ];
+			return reinterpret_cast<const uint32_t *>(&m_fields[ m_sectionOffsets[index]
+				+ m_name_offset + 2 ]);
 		}
 		else {
 			// Shouldn't be asking for this if bankCount() returned 0...!
-			return( (const uint32_t *) NULL );
+			return( (const uint32_t *)nullptr );
 		}
 	}
 
@@ -761,8 +802,8 @@ public:
 	double throttle(uint32_t index) const
 	{
 		if ( index < detBankSetCount() ) {
-			return *(const double *) &m_fields[
-				m_after_banks_offset[index] + 3 ];
+			return *reinterpret_cast<const double *>(&m_fields[
+				m_after_banks_offset[index] + 3 ]);
 		}
 		else
 			return( 0.0 );
@@ -772,9 +813,9 @@ public:
 	{
 		if ( index < detBankSetCount() ) {
 			char suffix_c[THROTTLE_SUFFIX_SIZE + 1];   // give them an inch
-			memset( (void *) suffix_c, '\0', THROTTLE_SUFFIX_SIZE + 1 );
+			memset( reinterpret_cast<void *>(suffix_c), '\0', THROTTLE_SUFFIX_SIZE + 1 );
 			strncpy(suffix_c,
-				(const char *) &(m_fields[m_after_banks_offset[index] + 5]),
+				reinterpret_cast<const char *>(&(m_fields[m_after_banks_offset[index] + 5])),
 				THROTTLE_SUFFIX_SIZE);
 			return( std::string(suffix_c) );
 		} else {
@@ -817,11 +858,11 @@ class DeviceDescriptorPkt : public Packet {
 public:
 	DeviceDescriptorPkt(const DeviceDescriptorPkt &pkt);
 
-	uint32_t devId(void) const { return m_devId; }
-	const std::string &description(void) const { return m_desc; }
+	uint32_t devId() const { return m_devId; }
+	const std::string &description() const { return m_desc; }
 
 	void remapDeviceId(uint32_t dev) {
-		uint32_t *fields = (uint32_t *)const_cast<uint8_t *>(payload());
+		uint32_t *fields = reinterpret_cast<uint32_t *>(const_cast<uint8_t *>(payload()));
 	        fields[0] = dev;
 		m_devId = dev;
 	};
@@ -839,19 +880,19 @@ class VariableU32Pkt : public Packet {
 public:
 	VariableU32Pkt(const VariableU32Pkt &pkt);
 
-	uint32_t devId(void) const { return m_fields[0]; }
-	uint32_t varId(void) const { return m_fields[1]; }
-	VariableStatus::Enum status(void) const {
+	uint32_t devId() const { return m_fields[0]; }
+	uint32_t varId() const { return m_fields[1]; }
+	VariableStatus::Enum status() const {
 		return static_cast<VariableStatus::Enum> (m_fields[2] >> 16);
 	}
-	VariableSeverity::Enum severity(void) const {
+	VariableSeverity::Enum severity() const {
 		return static_cast<VariableSeverity::Enum>
 							(m_fields[2] & 0xffff);
 	}
-	uint32_t value(void) const { return m_fields[3]; }
+	uint32_t value() const { return m_fields[3]; }
 
 	void remapDeviceId(uint32_t dev) {
-		uint32_t *fields = (uint32_t *)const_cast<uint8_t *>(payload());
+		uint32_t *fields = reinterpret_cast<uint32_t *>(const_cast<uint8_t *>(payload()));
 		fields[0] = dev;
 	};
 
@@ -867,25 +908,25 @@ class VariableDoublePkt : public Packet {
 public:
 	VariableDoublePkt(const VariableDoublePkt &pkt);
 
-	uint32_t devId(void) const { return m_fields[0]; }
-	uint32_t varId(void) const { return m_fields[1]; }
-	VariableStatus::Enum status(void) const {
+	uint32_t devId() const { return m_fields[0]; }
+	uint32_t varId() const { return m_fields[1]; }
+	VariableStatus::Enum status() const {
 		return static_cast<VariableStatus::Enum> (m_fields[2] >> 16);
 	}
-	VariableSeverity::Enum severity(void) const {
+	VariableSeverity::Enum severity() const {
 		return static_cast<VariableSeverity::Enum>
 							(m_fields[2] & 0xffff);
 	}
-	double value(void) const { return *((const double *) &m_fields[3]); }
+	double value() const { return *reinterpret_cast<const double *>(&m_fields[3]); }
 
 	void remapDeviceId(uint32_t dev) {
-		uint32_t *fields = (uint32_t *)const_cast<uint8_t *>(payload());
+		uint32_t *fields = reinterpret_cast<uint32_t *>(const_cast<uint8_t *>(payload()));
 		fields[0] = dev;
 	};
 
 	void updateValue(double value) {
-		uint32_t *fields = (uint32_t *)const_cast<uint8_t *>(payload());
-		*((double *) &fields[3]) = value;
+		uint32_t *fields = reinterpret_cast<uint32_t *>(const_cast<uint8_t *>(payload()));
+		*reinterpret_cast<double *>(&fields[3]) = value;
 	};
 
 	VariableDoublePkt(const uint8_t *data, uint32_t len);
@@ -900,19 +941,19 @@ class VariableStringPkt : public Packet {
 public:
 	VariableStringPkt(const VariableStringPkt &pkt);
 
-	uint32_t devId(void) const { return m_fields[0]; }
-	uint32_t varId(void) const { return m_fields[1]; }
-	VariableStatus::Enum status(void) const {
+	uint32_t devId() const { return m_fields[0]; }
+	uint32_t varId() const { return m_fields[1]; }
+	VariableStatus::Enum status() const {
 		return static_cast<VariableStatus::Enum> (m_fields[2] >> 16);
 	}
-	VariableSeverity::Enum severity(void) const {
+	VariableSeverity::Enum severity() const {
 		return static_cast<VariableSeverity::Enum>
 						(m_fields[2] & 0xffff);
 	}
-	const std::string &value(void) const { return m_val; }
+	const std::string &value() const { return m_val; }
 
 	void remapDeviceId(uint32_t dev) {
-		uint32_t *fields = (uint32_t *)const_cast<uint8_t *>(payload());
+		uint32_t *fields = reinterpret_cast<uint32_t *>(const_cast<uint8_t *>(payload()));
 		fields[0] = dev;
 	};
 
@@ -929,20 +970,20 @@ class VariableU32ArrayPkt : public Packet {
 public:
 	VariableU32ArrayPkt(const VariableU32ArrayPkt &pkt);
 
-	uint32_t devId(void) const { return m_fields[0]; }
-	uint32_t varId(void) const { return m_fields[1]; }
-	VariableStatus::Enum status(void) const {
+	uint32_t devId() const { return m_fields[0]; }
+	uint32_t varId() const { return m_fields[1]; }
+	VariableStatus::Enum status() const {
 		return static_cast<VariableStatus::Enum> (m_fields[2] >> 16);
 	}
-	VariableSeverity::Enum severity(void) const {
+	VariableSeverity::Enum severity() const {
 		return static_cast<VariableSeverity::Enum>
 							(m_fields[2] & 0xffff);
 	}
-	uint32_t elemCount(void) const { return m_fields[3]; }
-	const std::vector<uint32_t> &value(void) const { return m_val; }
+	uint32_t elemCount() const { return m_fields[3]; }
+	const std::vector<uint32_t> &value() const { return m_val; }
 
 	void remapDeviceId(uint32_t dev) {
-		uint32_t *fields = (uint32_t *)const_cast<uint8_t *>(payload());
+		uint32_t *fields = reinterpret_cast<uint32_t *>(const_cast<uint8_t *>(payload()));
 		fields[0] = dev;
 	};
 
@@ -959,20 +1000,20 @@ class VariableDoubleArrayPkt : public Packet {
 public:
 	VariableDoubleArrayPkt(const VariableDoubleArrayPkt &pkt);
 
-	uint32_t devId(void) const { return m_fields[0]; }
-	uint32_t varId(void) const { return m_fields[1]; }
-	VariableStatus::Enum status(void) const {
+	uint32_t devId() const { return m_fields[0]; }
+	uint32_t varId() const { return m_fields[1]; }
+	VariableStatus::Enum status() const {
 		return static_cast<VariableStatus::Enum> (m_fields[2] >> 16);
 	}
-	VariableSeverity::Enum severity(void) const {
+	VariableSeverity::Enum severity() const {
 		return static_cast<VariableSeverity::Enum>
 							(m_fields[2] & 0xffff);
 	}
-	uint32_t elemCount(void) const { return m_fields[3]; }
-	const std::vector<double> &value(void) const { return m_val; }
+	uint32_t elemCount() const { return m_fields[3]; }
+	const std::vector<double> &value() const { return m_val; }
 
 	void remapDeviceId(uint32_t dev) {
-		uint32_t *fields = (uint32_t *)const_cast<uint8_t *>(payload());
+		uint32_t *fields = reinterpret_cast<uint32_t *>(const_cast<uint8_t *>(payload()));
 		fields[0] = dev;
 	};
 
@@ -989,21 +1030,21 @@ class MultVariableU32Pkt : public Packet {
 public:
 	MultVariableU32Pkt(const MultVariableU32Pkt &pkt);
 
-	uint32_t devId(void) const { return m_fields[0]; }
-	uint32_t varId(void) const { return m_fields[1]; }
-	VariableStatus::Enum status(void) const {
+	uint32_t devId() const { return m_fields[0]; }
+	uint32_t varId() const { return m_fields[1]; }
+	VariableStatus::Enum status() const {
 		return static_cast<VariableStatus::Enum> (m_fields[2] >> 16);
 	}
-	VariableSeverity::Enum severity(void) const {
+	VariableSeverity::Enum severity() const {
 		return static_cast<VariableSeverity::Enum>
 							(m_fields[2] & 0xffff);
 	}
-	uint32_t numValues(void) const { return m_fields[3]; }
-	const std::vector<uint32_t> &values(void) const { return m_vals; }
-	const std::vector<uint32_t> &tofs(void) const { return m_tofs; }
+	uint32_t numValues() const { return m_fields[3]; }
+	const std::vector<uint32_t> &values() const { return m_vals; }
+	const std::vector<uint32_t> &tofs() const { return m_tofs; }
 
 	void remapDeviceId(uint32_t dev) {
-		uint32_t *fields = (uint32_t *)const_cast<uint8_t *>(payload());
+		uint32_t *fields = reinterpret_cast<uint32_t *>(const_cast<uint8_t *>(payload()));
 		fields[0] = dev;
 	};
 
@@ -1021,27 +1062,27 @@ class MultVariableDoublePkt : public Packet {
 public:
 	MultVariableDoublePkt(const MultVariableDoublePkt &pkt);
 
-	uint32_t devId(void) const { return m_fields[0]; }
-	uint32_t varId(void) const { return m_fields[1]; }
-	VariableStatus::Enum status(void) const {
+	uint32_t devId() const { return m_fields[0]; }
+	uint32_t varId() const { return m_fields[1]; }
+	VariableStatus::Enum status() const {
 		return static_cast<VariableStatus::Enum> (m_fields[2] >> 16);
 	}
-	VariableSeverity::Enum severity(void) const {
+	VariableSeverity::Enum severity() const {
 		return static_cast<VariableSeverity::Enum>
 							(m_fields[2] & 0xffff);
 	}
-	uint32_t numValues(void) const { return m_fields[3]; }
-	const std::vector<double> &values(void) const { return m_vals; }
-	const std::vector<uint32_t> &tofs(void) const { return m_tofs; }
+	uint32_t numValues() const { return m_fields[3]; }
+	const std::vector<double> &values() const { return m_vals; }
+	const std::vector<uint32_t> &tofs() const { return m_tofs; }
 
 	void remapDeviceId(uint32_t dev) {
-		uint32_t *fields = (uint32_t *)const_cast<uint8_t *>(payload());
+		uint32_t *fields = reinterpret_cast<uint32_t *>(const_cast<uint8_t *>(payload()));
 		fields[0] = dev;
 	};
 
 	void updateValue(double value) {
-		uint32_t *fields = (uint32_t *)const_cast<uint8_t *>(payload());
-		*((double *) &fields[3]) = value;
+		uint32_t *fields = reinterpret_cast<uint32_t *>(const_cast<uint8_t *>(payload()));
+		*reinterpret_cast<double *>(&fields[3]) = value;
 	};
 
 	MultVariableDoublePkt(const uint8_t *data, uint32_t len);
@@ -1058,21 +1099,21 @@ class MultVariableStringPkt : public Packet {
 public:
 	MultVariableStringPkt(const MultVariableStringPkt &pkt);
 
-	uint32_t devId(void) const { return m_fields[0]; }
-	uint32_t varId(void) const { return m_fields[1]; }
-	VariableStatus::Enum status(void) const {
+	uint32_t devId() const { return m_fields[0]; }
+	uint32_t varId() const { return m_fields[1]; }
+	VariableStatus::Enum status() const {
 		return static_cast<VariableStatus::Enum> (m_fields[2] >> 16);
 	}
-	VariableSeverity::Enum severity(void) const {
+	VariableSeverity::Enum severity() const {
 		return static_cast<VariableSeverity::Enum>
 						(m_fields[2] & 0xffff);
 	}
-	uint32_t numValues(void) const { return m_fields[3]; }
-	const std::vector<std::string> &values(void) const { return m_vals; }
-	const std::vector<uint32_t> &tofs(void) const { return m_tofs; }
+	uint32_t numValues() const { return m_fields[3]; }
+	const std::vector<std::string> &values() const { return m_vals; }
+	const std::vector<uint32_t> &tofs() const { return m_tofs; }
 
 	void remapDeviceId(uint32_t dev) {
-		uint32_t *fields = (uint32_t *)const_cast<uint8_t *>(payload());
+		uint32_t *fields = reinterpret_cast<uint32_t *>(const_cast<uint8_t *>(payload()));
 		fields[0] = dev;
 	};
 
@@ -1090,26 +1131,26 @@ class MultVariableU32ArrayPkt : public Packet {
 public:
 	MultVariableU32ArrayPkt(const MultVariableU32ArrayPkt &pkt);
 
-	uint32_t devId(void) const { return m_fields[0]; }
-	uint32_t varId(void) const { return m_fields[1]; }
-	VariableStatus::Enum status(void) const {
+	uint32_t devId() const { return m_fields[0]; }
+	uint32_t varId() const { return m_fields[1]; }
+	VariableStatus::Enum status() const {
 		return static_cast<VariableStatus::Enum> (m_fields[2] >> 16);
 	}
-	VariableSeverity::Enum severity(void) const {
+	VariableSeverity::Enum severity() const {
 		return static_cast<VariableSeverity::Enum>
 							(m_fields[2] & 0xffff);
 	}
-	uint32_t numValues(void) const { return m_fields[3]; }
+	uint32_t numValues() const { return m_fields[3]; }
 	uint32_t elemCount(uint32_t index) const {
 		return( ( index < numValues() ) ? m_vals[index].size() : 0 );
 	}
-	const std::vector<std::vector<uint32_t> > values(void) const {
+	const std::vector<std::vector<uint32_t> > values() const {
 		return m_vals;
 	}
-	const std::vector<uint32_t> &tofs(void) const { return m_tofs; }
+	const std::vector<uint32_t> &tofs() const { return m_tofs; }
 
 	void remapDeviceId(uint32_t dev) {
-		uint32_t *fields = (uint32_t *)const_cast<uint8_t *>(payload());
+		uint32_t *fields = reinterpret_cast<uint32_t *>(const_cast<uint8_t *>(payload()));
 		fields[0] = dev;
 	};
 
@@ -1127,26 +1168,26 @@ class MultVariableDoubleArrayPkt : public Packet {
 public:
 	MultVariableDoubleArrayPkt(const MultVariableDoubleArrayPkt &pkt);
 
-	uint32_t devId(void) const { return m_fields[0]; }
-	uint32_t varId(void) const { return m_fields[1]; }
-	VariableStatus::Enum status(void) const {
+	uint32_t devId() const { return m_fields[0]; }
+	uint32_t varId() const { return m_fields[1]; }
+	VariableStatus::Enum status() const {
 		return static_cast<VariableStatus::Enum> (m_fields[2] >> 16);
 	}
-	VariableSeverity::Enum severity(void) const {
+	VariableSeverity::Enum severity() const {
 		return static_cast<VariableSeverity::Enum>
 							(m_fields[2] & 0xffff);
 	}
-	uint32_t numValues(void) const { return m_fields[3]; }
+	uint32_t numValues() const { return m_fields[3]; }
 	uint32_t elemCount(uint32_t index) const {
 		return( ( index < numValues() ) ? m_vals[index].size() : 0 );
 	}
-	const std::vector<std::vector<double> > values(void) const {
+	const std::vector<std::vector<double> > values() const {
 		return m_vals;
 	}
-	const std::vector<uint32_t> &tofs(void) const { return m_tofs; }
+	const std::vector<uint32_t> &tofs() const { return m_tofs; }
 
 	void remapDeviceId(uint32_t dev) {
-		uint32_t *fields = (uint32_t *)const_cast<uint8_t *>(payload());
+		uint32_t *fields = reinterpret_cast<uint32_t *>(const_cast<uint8_t *>(payload()));
 		fields[0] = dev;
 	};
 
