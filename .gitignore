@@ -5,6 +5,7 @@
 # at the top for now.
 #
 common/test/parser-test
+common/test/adara-packet-test
 
 tools/adara-gen
 tools/adara-munge
@@ -38,4 +39,7 @@ depcomp
 aclocal.m4
 Makefile
 Makefile.in
+
+# ...but the hand-written gtest test Makefile is checked in (not generated).
+!common/test/Makefile
 autom4te.cache
