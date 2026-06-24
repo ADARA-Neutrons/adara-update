@@ -23,6 +23,7 @@ jobs:
         with:
           pixi-version: v0.70.2
           cache: true
+          frozen: true
 
       - name: Run unit tests
-        run: pixi run test
+        run: pixi run --frozen test
