@@ -765,7 +765,7 @@ TransCompletePkt::TransCompletePkt(const uint8_t *data, uint32_t len) :
 }
 
 TransCompletePkt::TransCompletePkt(const TransCompletePkt &pkt) :
-	Packet(pkt), m_reason(pkt.m_reason)
+	Packet(pkt), m_status(pkt.m_status), m_reason(pkt.m_reason)
 {}
 
 /* -------------------------------------------------------------------- */
@@ -951,7 +951,8 @@ SyncPkt::SyncPkt(const uint8_t *data, uint32_t len) :
 }
 
 SyncPkt::SyncPkt(const SyncPkt &pkt) :
-	Packet(pkt)
+	Packet(pkt), m_signature(pkt.m_signature),
+	m_offset(pkt.m_offset), m_comment(pkt.m_comment)
 {}
 
 /* -------------------------------------------------------------------- */
@@ -2026,8 +2027,11 @@ MultVariableDoublePkt::MultVariableDoublePkt(
 	/* TODO it would be better to create the array on access
 	 * rather than object construction; the user may not care.
 	 */
-	m_vals = std::vector<double>( numVals );
-	m_tofs = std::vector<uint32_t>( numVals );
+	// Start with empty arrays; values are appended in the loop below.
+	// (Pre-sizing to numVals here would leave numVals leading zero
+	// entries in front of the real data.)
+	m_vals = std::vector<double>();
+	m_tofs = std::vector<uint32_t>();
 
 	// Copy Over NumValues TOF and Double Values from Payload...
 
@@ -2043,7 +2047,12 @@ MultVariableDoublePkt::MultVariableDoublePkt(
 		m_tofs.push_back( *ptr++ );
 
 		// Next Double Value...
-		m_vals.push_back( *(reinterpret_cast<const double *>(ptr++)) );
+		double val;
+		memcpy( &val, ptr, sizeof(double) );
+		m_vals.push_back( val );
+
+		// Advance past the double value (which is wider than a uint32).
+		ptr += sizeof(double) / sizeof(uint32_t);
 	}
 }
 
@@ -2185,7 +2194,7 @@ MultVariableStringPkt::MultVariableStringPkt(
 		/* TODO it would be better to create the string on access
 		 * rather than object construction; the user may not care.
 		 */
-		m_vals[i].assign(str, size);
+		m_vals.push_back(std::string(str, size));
 
 		// "roundup(N,4)" bytes of null padded chars...
 		uint32_t roundup = ( size + sizeof(uint32_t) - 1 )
@@ -2319,7 +2328,7 @@ MultVariableU32ArrayPkt::MultVariableU32ArrayPkt(
 		/* TODO it would be better to create the array on access
 		 * rather than object construction; the user may not care.
 		 */
-		m_vals[i] = std::vector<uint32_t>( size );
+		m_vals.push_back( std::vector<uint32_t>( size ) );
 		memcpy(const_cast<uint32_t *> (m_vals[i].data()),
 			arr, size * sizeof(uint32_t));
 
@@ -2457,7 +2466,7 @@ MultVariableDoubleArrayPkt::MultVariableDoubleArrayPkt(
 		/* TODO it would be better to create the array on access
 		 * rather than object construction; the user may not care.
 		 */
-		m_vals[i] = std::vector<double>( size );
+		m_vals.push_back( std::vector<double>( size ) );
 		memcpy(const_cast<double *> (m_vals[i].data()),
 			arr, size * sizeof(double));
 
